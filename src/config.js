@@ -1,3 +1,3 @@
 export const PORT = 4000;
 
-export const DB_URL = "mongodb://127.0.0.1:27017/attendance_app";
+export const DB_URL = "mongodb+srv://NVDuong:pMiHIs5mg5X21gf2@cluster0.c3sduaa.mongodb.net/?retryWrites=true&w=majority";

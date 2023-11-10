@@ -13,103 +13,123 @@ app.use(express.json());
 
 app.use(cors());
 
-app.get("/", async (req, res) => {
-    // Book.find({}).populate("authorId")
-    // .then((result)=>{
-    //     res.json(result)
-    // })
+app.use(express.static("public"));
 
-    const result = await Attendance.find({}).populate("studentId");
-    console.log(result);
-    res.json(result);
+app.get("/", async (req, res) => {
+    res.json({ message: "hello world" });
 });
 
 // class API
-app.get("/classes", async (req, res) => {
-    const classes = await Class.find({});
-    return res.json(classes);
-});
-
-app.get("/classes/:id", async (req, res) => {
-    const id = req.params.id;
-    const _class = await Class.findById(id);
-    return res.json(_class);
-});
 
 app.post("/classes", async (req, res) => {
-    const name = req.body.name;
-    const tuitionFee = req.body.tuitionFee;
+    let name = req.body.name;
+    let tuitionFee = Number(req.body.tuitionFee);
+    name = ("" + name).trim();
 
-    if (!name || !tuitionFee) {
-        return res.status(400).send("pless send all required filed");
+    if (name === "") {
+        return res.status(400).json({ message: "name is required" });
     }
+
+    if (!tuitionFee) {
+        if (Number.isNaN(tuitionFee)) {
+            return res.status(400).json({
+                message:
+                    "tuition fee is not valid. Tuition fee must be positive",
+            });
+        }
+        return res.status(400).json({ message: "tuition fee is required" });
+    }
+
+    if (!Number(tuitionFee))
+        if (!name || !tuitionFee) {
+            return res.status(400).send("please send all required filed");
+        }
 
     try {
         const _class = new Class({ name, tuitionFee });
         const result = await Class.create(_class);
-        res.status(201).json(result);
+
+        res.status(201).json({ isSuccess: true, data: result });
     } catch (error) {
         res.status(500).send({ message: error });
+    }
+});
+
+app.get("/classes", async (req, res) => {
+    try {
+        const classes = await Class.find({});
+        const count = classes.length;
+        return res.status(200).json({ isSuccess: true, count, data: classes });
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: err });
+    }
+});
+
+app.get("/classes/:id", async (req, res) => {
+    try {
+        const id = req.params.id;
+        if (!mongoose.isValidObjectId(id)) {
+            return res.status(400).json({ message: "id is not valid" });
+        }
+        const _class = await Class.findById(id);
+        if (_class === null) {
+            return res.status(404).json({ message: "class not found" });
+        }
+        return res.json({ isSuccess: true, data: _class });
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: error });
     }
 });
 
 app.delete("/classes/:id", async (req, res) => {
-    const id = req.params.id;
-    const result = await Class.findByIdAndDelete(id);
-    return res.json(result);
+    try {
+        const id = req.params.id;
+        if (!mongoose.isValidObjectId(id)) {
+            return res.status(400).json({ message: "id is not valid" });
+        }
+        const attendances = await Attendance.find({ classId: id });
+        const studentIds = attendances.map((item) => {
+            return item.studentId;
+        });
+
+        await Student.deleteMany({ _id: { $in: studentIds } });
+        await Attendance.deleteMany({ classId: id });
+
+        const result = await Class.findByIdAndDelete(id);
+
+        if (result === null) {
+            return res.status(404).json({ message: "class not found" });
+        }
+        return res.status(200).json({ isSuccess: true, data: result });
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: error });
+    }
 });
 
 // student API
 
-app.get("/students", async (req, res) => {
-    const students = await Student.find({});
-    res.json(students);
-});
-
-app.get("/students/:id", async (req, res) => {
-    const id = req.params.id;
-
-    try {
-        const student = await Student.findById(id);
-        return res.json(student);
-    } catch (error) {
-        console.log(error);
-        res.status(500).send({ message: error });
-    }
-});
-
-app.get("/students/getByClass/:classId", async (req, res) => {
-    const id = req.params.classId;
-    const studentAttendances = await Attendance.find({ classId: id });
-    const studentIds = studentAttendances.map((student) => {
-        return student.studentId;
-    });
-    const students = studentIds.map(async (studentId) => {
-        const student = await Student.findById(studentId);
-        return student;
-    });
-
-    async function getStudents() {
-        return Promise.all(
-            studentIds.map(async (studentId) => {
-                return await Student.findById(studentId);
-            })
-        );
-    }
-
-    getStudents()
-        .then((data) => {
-            return res.json(data);
-        })
-        .catch((err) => {
-            console.log(err);
-            return res.json({});
-        });
-});
-
 app.post("/students", async (req, res) => {
-    const name = req.body.name;
+    let name = req.body.name;
+    name = ("" + name).trim();
     const classId = req.body.classId;
+
+    if (!name) {
+        return res.status(400).json({ message: "name is required" });
+    }
+
+    if (!mongoose.isValidObjectId(classId)) {
+        return res.status(400).json({ message: "class id is not valid" });
+    }
+
+    const isClassExisted = !!(await Class.findById(classId));
+
+    if (!isClassExisted) {
+        return res.status(404).json({ message: "class not found" });
+    }
+
     if (!name || !classId) {
         return res.status(400).send({ message: "bad request" });
     }
@@ -118,28 +138,111 @@ app.post("/students", async (req, res) => {
     const studentId = student._id;
     try {
         const newStudent = await Student.create(student);
-        const instance = new Attendance({ studentId, classId });
-        await Attendance.create(instance);
-        return res.json(newStudent);
+        const attendace = new Attendance({ studentId, classId });
+        await Attendance.create(attendace);
+        return res.json({ isSuccess: true, data: newStudent });
     } catch (error) {
         console.log(error);
         return res.status(500).send({ message: error });
     }
 });
 
+app.get("/students", async (req, res) => {
+    try {
+        const students = await Student.find({});
+        const count = students.length;
+
+        return res.status(200).json({ isSuccess: true, data: students });
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: error });
+    }
+});
+
+app.get("/students/:id", async (req, res) => {
+    const id = req.params.id;
+
+    if (!mongoose.isValidObjectId(id)) {
+        return res.status(400).json({ message: "id is not valid" });
+    }
+
+    try {
+        const student = await Student.findById(id);
+        if (student === null) {
+            return res.status(404).json({ message: "student not found" });
+        }
+        return res.json(student);
+    } catch (error) {
+        console.log(error);
+        res.status(500).send({ message: error });
+    }
+});
+
+app.get("/students/classes/:classId", async (req, res) => {
+    const id = req.params.classId;
+
+    if (!mongoose.isValidObjectId(id)) {
+        return res.status(400).json({ message: "id is not valid" });
+    }
+
+    try {
+        const attendances = await Attendance.find({ classId: id });
+        const studentIds = attendances.map((student) => {
+            return student.studentId;
+        });
+        const count = studentIds.length;
+        if (count === 0) {
+            return res.status(200).json({ isSuccess: true, count, data: [] });
+        }
+        const students = await Student.find({
+            _id: {
+                $in: studentIds,
+            },
+        });
+        return res.status(200).json({ isSuccess: true, count, data: students });
+    } catch (error) {
+        return res.json({ message: error });
+    }
+
+    // const students = studentIds.map(async (studentId) => {
+    //     const student = await Student.findById(studentId);
+    //     return student;
+    // });
+
+    // async function getStudents() {
+    //     return Promise.all(
+    //         studentIds.map(async (studentId) => {
+    //             return await Student.findById(studentId);
+    //         })
+    //     );
+    // }
+
+    // getStudents()
+    //     .then((data) => {
+    //         return res.json(data);
+    //     })
+    //     .catch((err) => {
+    //         console.log(err);
+    //         return res.json({});
+    //     });
+});
+
 app.delete("/students/:id", async (req, res) => {
     const id = req.params.id;
     const isIdValid = mongoose.isValidObjectId(id);
-    if (isIdValid) {
-        try {
-            await Attendance.deleteOne({ studentId: id });
-            const result = await Student.findByIdAndDelete(id);
-            return res.send(result);
-        } catch (error) {
-            return res.status(500);
-        }
+
+    if (!isIdValid) {
+        return res.status(400).json({ message: "id is not valid" });
     }
-    return res.status(400).send({ message: "invalid id" });
+
+    try {
+        await Attendance.deleteMany({ studentId: id });
+        const result = await Student.findByIdAndDelete(id);
+        if (result === null) return res.status(204).send();
+        return res.json({ isSuccess: true, data: result });
+    } catch (error) {
+        return res.status(500);
+    }
 });
 
 // attendance
@@ -149,89 +252,37 @@ app.get("/attendance", async (req, res) => {
     res.json(attendances);
 });
 
-app.get("/attendance/byClass/:id", async (req, res) => {
+app.get("/attendances/class/:id", async (req, res) => {
     const { id } = req.params;
-    if (!id) {
-        return res.status(400).json([]);
-    }
     const { date } = req.query;
 
-    const d = new Date(date);
-    if (!d) {
-        return res.status(400).json({ message: "invalid date" });
+    if (!mongoose.isValidObjectId(id)) {
+        return res.status(400).json({ message: "id is not valid" });
     }
 
-    if (mongoose.isValidObjectId(id)) {
-        try {
-            const result = await Attendance.find({ classId: id });
-
-            const attendances = result.filter((attendace) => {
-                const dates = attendace.dates.map((dateItem) => {
-                    return formatDate(dateItem);
-                });
-
-                const condition = dates.includes(date);
-                return condition;
-            });
-            const ids = attendances.map((item) => {
-                return item.studentId;
-            });
-            res.json(ids);
-        } catch (error) {
-            console.log(error);
-            res.status(500).json({ message: error });
-        }
-    } else {
-        res.status(400).json([]);
-    }
-});
-
-app.post("/attendance", async (req, res) => {
-    const studentId = req.body.studentId;
-    const classId = req.body.classId;
-
-    if (!studentId || !classId) {
-        return res.status(400).send({ message: "bad request" });
-    }
-    try {
-        const isExist = await Attendance.findOne({ studentId, classId });
-        if (isExist) {
-            return res.status(200).send({ message: "Existed" });
-        }
-        const instance = new Attendance({ studentId, classId });
-        const result = await Attendance.create(instance);
-        return res.json(result);
-    } catch (error) {
-        console.log(error);
-        return res.status(500).send({ message: error });
-    }
-});
-
-app.patch("/attendances/addAttendance", async (req, res) => {
-    const { classId, studentId, date } = req.body;
-    if (!classId || !studentId || !date) {
-        return res.status(400).send("bad request");
+    const _date = new Date(date);
+    if (!_date) {
+        return res.status(400).json({ message: "date is not valid" });
     }
 
     try {
-        const attendance = await Attendance.findOne({ classId, studentId });
-        if (!attendance) {
-            res.send({ message: "not exist" });
-        }
-
-        const dates = attendance.dates;
-        const d = new Date(date);
-        const isExist = dates.filter((item) => {
-            return item.getTime() === d.getTime();
+        const attendances = await Attendance.find({ classId: id });
+        console.log(date, id);
+        const attendancesOfDate = attendances.filter((attendance) => {
+            const dates = attendance.dates.map((dateItem) => {
+                return formatDate(dateItem);
+            });
+            const condition = dates.includes(formatDate(_date));
+            return condition;
         });
-        if (isExist.length === 0) {
-            dates.push(d);
-        }
-        attendance.save();
-        res.send(attendance);
+        const ids = attendancesOfDate.map((item) => {
+            return item.studentId;
+        });
+        const count = ids.length;
+        res.json({ isSuccess: true, count, data: ids });
     } catch (error) {
         console.log(error);
-        return res.status(500).send({ message: error });
+        res.status(500).json({ message: error });
     }
 });
 
@@ -264,14 +315,25 @@ async function removeAttendance(attendances, date) {
     });
 }
 
-app.patch("/attendances/classAttendances", async (req, res) => {
+app.patch("/attendances/update", async (req, res) => {
     const { classId, studentIds, date } = req.body;
-    // if (!classId || !Array.isArray(studentIds)) {
-    //     return res.status(400).json([]);
-    // }
+    if (!mongoose.isValidObjectId(classId)) {
+        return res.status(400).json({ message: "class id is not valid" });
+    }
+
+    if (!Array.isArray(studentIds)) {
+        return res.status(400).json({ message: "student ids is not valied" });
+    }
+    const _date = new Date(date);
+    if (!_date) {
+        return res.status(400).json({ message: "date is not valid" });
+    }
 
     try {
         const d = new Date(date);
+        if(!d){
+            return res.status(400).json({message:"invalid date", data:[]})
+        }
         const attendances = await Attendance.find({ classId });
         const ids = attendances.map((student) => {
             return student.studentId;
@@ -297,51 +359,6 @@ app.patch("/attendances/classAttendances", async (req, res) => {
     }
 });
 
-app.patch("/attendances/deleteAttendance", async (req, res) => {
-    const { classId, studentId, date } = req.body;
-    if (!classId || !studentId || !date) {
-        return res.status(400).send("bad request");
-    }
-
-    try {
-        const attendance = await Attendance.findOne({ classId, studentId });
-        if (!attendance) {
-            res.send({ message: "not exist" });
-        }
-
-        const dates = attendance.dates;
-        const d = new Date(date);
-        const newDates = dates.filter((item) => {
-            return item.getTime() != d.getTime();
-        });
-        attendance.dates = newDates;
-        attendance.save();
-        res.send(attendance);
-    } catch (error) {
-        console.log(error);
-        return res.status(500).send({ message: error });
-    }
-});
-
-app.delete("/attendances", async (req, res) => {
-    const { studentId, classId } = req.body;
-    if (!studentId || !classId) {
-        return res.status(400).send({ message: "bad request" });
-    }
-    try {
-        const attendace = await Attendance.findOne({ studentId, classId });
-        if (!attendace) {
-            return res.send({ message: "not existed" });
-        }
-        const id = attendace._id;
-        const result = await Attendance.findByIdAndDelete(id);
-        res.json(result);
-    } catch (error) {
-        console.log(error);
-        return res.status(500).send({ message: error });
-    }
-});
-
 // tuitionFee
 
 app.get("/tuitionFees", async (req, res) => {
@@ -349,6 +366,7 @@ app.get("/tuitionFees", async (req, res) => {
 
     try {
         const _class = await Class.findById(classId);
+        if (_class === null) throw Error("invalid class");
         const classTuitionFee = _class.tuitionFee;
         const className = _class.name;
 
@@ -357,7 +375,7 @@ app.get("/tuitionFees", async (req, res) => {
             studentId: { $in: studentIds },
         }).populate("studentId");
 
-        const newAttendances_student = attendances_students.map((a) => {
+        const attendanceOfDate = attendances_students.map((a) => {
             const name = a.studentId.name;
             const studentId = a.studentId._id;
             const dates = a.dates.filter((date) => {
@@ -369,40 +387,58 @@ app.get("/tuitionFees", async (req, res) => {
 
             const count = dates.length;
             const tuitionFee = classTuitionFee * count;
-            const result = {studentId, name, classId, className, year, month, dates, count, tuitionFee };
+            const result = {
+                studentId,
+                name,
+                classId,
+                className,
+                year,
+                month,
+                dates,
+                count,
+                tuitionFee,
+            };
             return result;
         });
-
-        res.json(newAttendances_student);
+        const count = attendanceOfDate.length;
+        res.json({ isSuccess: true, count, data: attendanceOfDate });
     } catch (error) {
         console.log(error);
         res.json(error);
     }
 });
 
-app.get("/tuitionFeeByStudent/:studentId", async (req, res) => {
-    const { studentId } = req.params;
-    const { month, year } = req.query;
-    const student = await Student.findById(studentId);
-    const attendance = await Attendance.findOne({ studentId });
-    const { classId } = attendance;
-    const _class = await Class.findById(classId);
-    const tuitionFee = _class.tuitionFee;
-    const dates = attendance.dates.filter((date) => {
-        const d = new Date(date);
-        const condition = d.getFullYear() == year && d.getMonth() == month - 1;
-        return condition;
-    });
-    const count = dates.length;
-    const monthyTuitionFee = tuitionFee * count;
-    return res.send({
-        class: _class.name,
-        student: student.name,
-        tuitionFee,
-        count,
-        dates,
-        monthyTuitionFee,
-    });
+app.get("/tuitionFee/:studentId", async (req, res) => {
+    try {
+        const { studentId } = req.params;
+        const { month, year } = req.query;
+        const student = await Student.findById(studentId);
+        const attendance = await Attendance.findOne({ studentId });
+        const { classId } = attendance;
+        const _class = await Class.findById(classId);
+        const tuitionFee = _class.tuitionFee;
+        const dates = attendance.dates.filter((date) => {
+            const d = new Date(date);
+            const condition =
+                d.getFullYear() == year && d.getMonth() == month - 1;
+            return condition;
+        });
+        const count = dates.length;
+        const monthyTuitionFee = tuitionFee * count;
+        return res.json({
+            isSuccess: true,
+            data: {
+                class: _class.name,
+                student: student.name,
+                tuitionFee,
+                count,
+                dates,
+                monthyTuitionFee,
+            },
+        });
+    } catch (error) {
+        res.json({message:error})
+    }
 });
 
 mongoose
